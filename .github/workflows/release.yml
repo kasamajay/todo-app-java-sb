@@ -1,0 +1,80 @@
+# Release: on a vX.Y.Z tag, build once and publish the versioned artifacts:
+#   - GitHub Release with app.jar + app.jar.sha256 attached
+#   - GHCR images tagged X.Y.Z (API and web)
+# The jar's manifest Implementation-Version is set from the tag.
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  API_IMAGE: ghcr.io/${{ github.repository_owner }}/todo-app-java-sb-api
+  WEB_IMAGE: ghcr.io/${{ github.repository_owner }}/todo-app-java-sb-web
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version from tag
+        id: v
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: api/pom.xml
+      - name: Test and package
+        working-directory: api
+        run: |
+          mvn -B -ntp versions:set -DnewVersion=${{ steps.v.outputs.version }} -DgenerateBackupPoms=false
+          mvn -B -ntp verify
+          cd target && sha256sum app.jar > app.jar.sha256
+          unzip -p app.jar META-INF/MANIFEST.MF | grep Implementation-Version
+      - name: GitHub Release with the jar
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" api/target/app.jar api/target/app.jar.sha256 \
+            --title "$GITHUB_REF_NAME" --generate-notes
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: API image
+        uses: docker/build-push-action@v6
+        with:
+          context: api
+          file: api/Dockerfile
+          push: true
+          # The build context is the same workspace where versions:set just
+          # rewrote api/pom.xml, so the jar inside the image carries the tag's
+          # version too.
+          tags: |
+            ${{ env.API_IMAGE }}:${{ steps.v.outputs.version }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.v.outputs.version }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=api
+      - name: Web image
+        uses: docker/build-push-action@v6
+        with:
+          context: web
+          file: web/Dockerfile
+          push: true
+          tags: |
+            ${{ env.WEB_IMAGE }}:${{ steps.v.outputs.version }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.v.outputs.version }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=web

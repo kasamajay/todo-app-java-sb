@@ -21,3 +21,6 @@ todo-app-java-sb-admin.txt
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Python bytecode from running the contract suite
+__pycache__/

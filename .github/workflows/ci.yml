@@ -1,0 +1,162 @@
+# CI for todo-app-java-sb. See decisions/0015 for what gets built and kept.
+#
+#   test      mvn verify - the JUnit suite, natively on the runner
+#   package   the executable fat jar (app.jar) + SHA-256, kept as a workflow artifact
+#   contract  the production stack (nginx + layered API image) under Docker
+#             Compose, with the black-box contract suite run through nginx
+#   images    builds both production images on every run; pushes them to GHCR
+#             (tagged with the commit SHA and "latest") only on main
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  API_IMAGE: ghcr.io/${{ github.repository_owner }}/todo-app-java-sb-api
+  WEB_IMAGE: ghcr.io/${{ github.repository_owner }}/todo-app-java-sb-web
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: api/pom.xml
+      - name: mvn verify
+        run: mvn -B -ntp verify
+      - name: Keep test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: api/target/surefire-reports/
+          retention-days: 14
+
+  package:
+    runs-on: ubuntu-latest
+    needs: test
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: api/pom.xml
+      - name: Build the executable jar
+        run: mvn -B -ntp -DskipTests package
+      - name: Checksum
+        run: |
+          cd target
+          sha256sum app.jar > app.jar.sha256
+          cat app.jar.sha256
+          unzip -p app.jar META-INF/MANIFEST.MF | grep -E 'Main-Class|Start-Class|Implementation-Version'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-jar-${{ github.sha }}
+          path: |
+            api/target/app.jar
+            api/target/app.jar.sha256
+          retention-days: 30
+          if-no-files-found: error
+
+  contract:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the production stack (fresh, throwaway api/data)
+        run: |
+          docker compose -f docker-compose.prod.yml up -d --build
+          for _ in $(seq 1 60); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' localhost:8081/api/boards)" = 401 ] && exit 0
+            sleep 2
+          done
+          docker compose -f docker-compose.prod.yml logs
+          exit 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Contract suite through nginx
+        env:
+          CONTRACT_BASE_URL: http://localhost:8081
+        run: |
+          pip install -q pytest==8.3.4 httpx==0.28.1
+          pytest -q -p no:cacheprovider contract
+      - name: Production smoke checks
+        run: |
+          curl -fsS localhost:8081/ | grep -q '/assets/index-'
+          curl -fsS -o /dev/null localhost:8081/admin
+          docker compose -f docker-compose.prod.yml exec -T api sh -c '! command -v javac && ! command -v mvn'
+      - name: Stack logs
+        if: failure()
+        run: docker compose -f docker-compose.prod.yml logs
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.prod.yml down -v
+
+  images:
+    runs-on: ubuntu-latest
+    needs: [package, contract]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: API image
+        uses: docker/build-push-action@v6
+        with:
+          context: api
+          file: api/Dockerfile
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ env.API_IMAGE }}:${{ github.sha }}
+            ${{ env.API_IMAGE }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+      - name: Web image
+        uses: docker/build-push-action@v6
+        with:
+          context: web
+          file: web/Dockerfile
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ env.WEB_IMAGE }}:${{ github.sha }}
+            ${{ env.WEB_IMAGE }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max

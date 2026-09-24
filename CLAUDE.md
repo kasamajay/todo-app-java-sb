@@ -33,6 +33,10 @@ docker run --rm -v "$PWD/contract:/c" -e CONTRACT_BASE_URL=http://host.docker.in
 
 **Same host ports as todo-app and todo-app-py**, so only one of the three apps runs at a time. `start.ps1` refuses if any of the six Compose projects (`todo-app[-prod]`, `todo-app-py[-prod]`, `todo-app-java-sb[-prod]`) other than its own is running.
 
+## CI/CD
+
+`.github/workflows/ci.yml` (test → package jar → contract suite against the prod stack → images, pushed to GHCR only on `main`) and `release.yml` (tag `vX.Y.Z` → Release with `app.jar` + images `:X.Y.Z`). `api/Dockerfile` extracts the fat jar into layers (thin `app.jar` + `lib/`), so keep dependencies and app in separate `COPY` layers. Lint workflows with `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:latest`. See decisions/0015.
+
 ## Git workflow
 
 Never commit directly to `main`. Branch, verify, push, and open a PR (`gh pr create`). Don't merge PRs yourself.
@@ -46,7 +50,7 @@ Never commit directly to `main`. Branch, verify, push, and open a PR (`gh pr cre
   - Keep `*.sh` LF (`.gitattributes`). A CRLF `dev-watch.sh` fails with `set: Illegal option -`.
   - `web` is identical to todo-app. It runs Vite via `node node_modules/vite/bin/vite.js`, not `npm run dev`, and Vite proxies `/api` to `http://api:8080`.
 - **Prod** (`docker-compose.prod.yml`, project `todo-app-java-sb-prod`):
-  - `api/Dockerfile` builds `app.jar` in a Maven/JDK stage. The runtime is `eclipse-temurin:21-jre-alpine` running `java -jar`.
+  - `api/Dockerfile` builds `app.jar` in a Maven/JDK stage and extracts it into layers. The runtime is `eclipse-temurin:21-jre-alpine` running `java -jar /app/app.jar`: a thin jar with `lib/*.jar` on its manifest Class-Path (decisions/0015).
   - nginx serves the bundle on 8081 and proxies `/api/`. The API isn't published on the host.
   - Prod shares `api/data` with dev. Prod Google URLs come from `PROD_GOOGLE_REDIRECT_URI` / `PROD_FRONTEND_BASE_URL`.
 
