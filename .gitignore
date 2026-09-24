@@ -1,0 +1,23 @@
+# Java / Maven
+api/target/
+
+# Runtime data (JSON storage, secrets, uploaded attachments)
+api/data/*
+!api/data/.gitkeep
+
+# Node / Vite
+web/node_modules/
+web/dist/
+
+# Env
+.env
+
+# Local admin credentials (never pushed)
+todo-app-java-sb-admin.txt
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
