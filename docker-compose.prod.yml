@@ -1,0 +1,43 @@
+# Production mode: the React app is compiled + bundled at image build time and
+# served as static files by nginx, which also reverse-proxies /api/* to the
+# Spring Boot API (one JVM, JRE-only image). No Node process runs at runtime.
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#   -> http://localhost:8081  (admin panel: http://localhost:8081/admin)
+#
+# Uses the same ports as todo-app (the Go version), and shares ./api/data
+# with this project's dev stack - run only one of these stacks at a time.
+# See decisions/0013-production-mode-nginx-static-bundle.md.
+
+name: todo-app-java-sb-prod
+
+services:
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    # No host port: the api is only reachable through nginx.
+    expose:
+      - "8080"
+    volumes:
+      - ./api/data:/app/data
+    environment:
+      - ADDR=:8080
+      - DATA_DIR=/app/data
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      # Separate PROD_* names so the dev GOOGLE_REDIRECT_URI/FRONTEND_BASE_URL
+      # in .env (localhost:5173 or an ngrok domain) don't leak in here.
+      - GOOGLE_REDIRECT_URI=${PROD_GOOGLE_REDIRECT_URI:-http://localhost:8081/api/auth/google/callback}
+      - FRONTEND_BASE_URL=${PROD_FRONTEND_BASE_URL:-http://localhost:8081}
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    ports:
+      - "8081:80"
+    depends_on:
+      - api
+    restart: unless-stopped

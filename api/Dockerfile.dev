@@ -1,0 +1,18 @@
+FROM maven:3.9-eclipse-temurin-21
+
+WORKDIR /app
+
+# Warm the dependency cache into the image so the first `docker compose up`
+# doesn't start from nothing (docker-compose.yml also mounts a named volume at
+# /root/.m2 so later downloads persist across container rebuilds).
+COPY pom.xml ./
+RUN mvn -q -B dependency:go-offline
+
+# Source is bind-mounted over this at runtime (see docker-compose.yml); the
+# COPY here just keeps the image buildable/runnable standalone.
+COPY . .
+
+EXPOSE 8080
+
+# Polling recompile loop + spring-boot:run with devtools (decisions/0008).
+CMD ["sh", "dev-watch.sh"]
