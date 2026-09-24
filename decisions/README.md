@@ -20,6 +20,7 @@ Lightweight architecture decision records (ADRs) for this project. Each file cap
 | [0012](0012-optional-ngrok-static-domain-for-google-oauth.md) | Optional ngrok static domain for stable Google OAuth redirects |
 | [0013](0013-production-mode-nginx-static-bundle.md) | Production mode: nginx serves a prebuilt Vite bundle, no Node at runtime |
 | [0014](0014-java-spring-boot-port.md) | Java (Spring Boot) port of the API with strict contract and data parity |
+| [0015](0015-ci-artifacts-fat-jar-and-layered-image.md) | CI/CD artifacts: an executable fat jar, shipped as a layered container image |
 
 To add a new one: copy the format below into a new numbered file and add a row to the table above.
 

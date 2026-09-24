@@ -92,9 +92,10 @@ browser -> nginx :8081 --+-- /assets/*, index.html  (prebuilt Vite bundle)
 - `web/Dockerfile` runs `vite build` in a throwaway `node:20` stage and copies
   only `dist/` into `nginx:alpine`; `web/nginx.conf` does the `/api` proxy,
   the `/admin` -> `index.html` fallback, gzip, and caching.
-- `api/Dockerfile` builds the jar with Maven + JDK in a throwaway stage; the
-  runtime image is `eclipse-temurin:21-jre-alpine` with only `app.jar` - no
-  JDK, Maven, sources or devtools.
+- `api/Dockerfile` builds the jar with Maven + JDK in a throwaway stage and
+  extracts it into layers; the runtime image is `eclipse-temurin:21-jre-alpine`
+  with a thin `app.jar` (our code) + `lib/*.jar` (dependencies) as separate
+  image layers - no JDK, Maven, sources or devtools.
 - It runs under its own Compose project (`todo-app-java-sb-prod`) but **shares
   `api/data`** with dev. Don't run both stacks at once.
 - Google sign-in in prod: add `http://localhost:8081/api/auth/google/callback`
@@ -151,6 +152,16 @@ docker compose run --rm --no-deps api mvn -q -B test
   ```
   docker run --rm -v "$PWD/contract:/c" -e CONTRACT_BASE_URL=http://host.docker.internal:8080 python:3.12-slim sh -c "pip install -q pytest==8.3.4 httpx==0.28.1 && pytest -q /c"
   ```
+
+## CI/CD
+
+GitHub Actions ([`decisions/0015`](decisions/0015-ci-artifacts-fat-jar-and-layered-image.md)):
+
+- **`ci.yml`** (PRs + `main`): JUnit (`mvn verify`) → the executable jar (`app.jar` + SHA-256, kept 30 days as a workflow artifact) → the production stack under Compose with the contract suite run through nginx → both images built; on `main` they're pushed to GHCR as `ghcr.io/kasamajay/todo-app-java-sb-{api,web}:<sha>` and `:latest`.
+- **`release.yml`** (tag `vX.Y.Z`): the version is set from the tag, then tests, a GitHub Release with `app.jar` + checksum, and images tagged `X.Y.Z`.
+- Deploying (CD) is not wired up yet. The GHCR images are the deploy unit.
+
+What gets built: **one executable fat jar, not a war**. `app.jar` contains our classes (`BOOT-INF/classes`) and all 30 dependency jars nested unchanged (`BOOT-INF/lib`, embedded Tomcat included); `java -jar` starts Spring Boot's `JarLauncher`, which loads those nested jars and calls `TodoApiApplication`. The production image instead *extracts* the jar into layers: a thin `app.jar` (~92 KB) plus `lib/*.jar` (~19 MB) as separate Docker layers, so a code change ships ~100 KB instead of 20 MB.
 
 ## Makefile / raw docker compose commands
 
