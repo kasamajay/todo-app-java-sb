@@ -1,0 +1,44 @@
+name: todo-app-java-sb
+
+services:
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./api:/app
+      - ./api/data:/app/data
+      # Build output stays inside the container (fast, and devtools watches
+      # it); the Maven cache persists across container rebuilds.
+      - /app/target
+      - m2:/root/.m2
+    working_dir: /app
+    environment:
+      - ADDR=:8080
+      - DATA_DIR=/app/data
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI:-http://localhost:5173/api/auth/google/callback}
+      - FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-http://localhost:5173}
+    command: sh dev-watch.sh
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    working_dir: /app
+    environment:
+      - VITE_API_PROXY_TARGET=http://api:8080
+    depends_on:
+      - api
+    command: node node_modules/vite/bin/vite.js --host 0.0.0.0 --clearScreen false
+
+volumes:
+  m2:

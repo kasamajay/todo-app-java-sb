@@ -1,0 +1,3 @@
+# Runtime data (users, secret.key, attachments) must never be baked into an image.
+data
+target

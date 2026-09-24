@@ -1,0 +1,18 @@
+FROM node:20
+
+WORKDIR /app
+
+COPY package.json ./
+RUN npm install
+
+# Source is bind-mounted over this at runtime (see docker-compose.yml); the
+# COPY here just keeps the image buildable/runnable standalone.
+COPY . .
+
+EXPOSE 5173
+
+# Invoke vite's bin script directly via node rather than through `npm run`
+# or `npx` - both were observed to exit immediately (code 0, no vite
+# startup banner, no error output) in this detached/non-TTY container
+# context, while calling the script directly runs and serves normally.
+CMD ["node", "node_modules/vite/bin/vite.js", "--host", "0.0.0.0", "--clearScreen", "false"]
